@@ -5,7 +5,6 @@ Created on Fri Apr 10 00:56:52 2020
 @author: Deepanshu.pal
 """
 
-
 from flask import Flask, request, jsonify, render_template
 import pickle
 import string
