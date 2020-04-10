@@ -5,12 +5,13 @@ Created on Fri Apr 10 00:56:52 2020
 @author: Deepanshu.pal
 """
 
+
 from flask import Flask, request, jsonify, render_template
 import pickle
 import string
-
-app = Flask(__name__)
 import numpy as np
+app = Flask(__name__)
+
 import pandas as pd
 import string
 import nltk
@@ -82,4 +83,5 @@ def predict():
 
     return render_template('index.html', data=output)
 
-
+if __name__ == "__main__":
+    app.run(debug=True)
