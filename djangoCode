@@ -1,0 +1,193 @@
+# Loading the libraries
+import csv
+from django.shortcuts import render
+from django.http import HttpResponse
+import numpy as np
+import pandas as pd
+import string
+import nltk
+import os
+java_path = "C:\\Program Files\\Java\\jdk-12.0.2\\bin\\java.exe"
+os.environ['JAVAHOME'] = java_path
+from nltk.tag import StanfordPOSTagger
+from nltk import word_tokenize
+from nltk.corpus import stopwords 
+from nltk.stem import PorterStemmer  
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# Loading the CSV files
+data = pd.read_csv('C:\\Users\\ADMIN\\projects\\fProject\\static\\cProjectNew.csv',encoding='latin-1')
+Adata = pd.read_csv('C:\\Users\\ADMIN\\projects\\fProject\\static\\cApiNew.csv',encoding='latin-1')
+
+
+# recmd method for handling the recommendation process
+def recmd(request):
+
+    # gathering new project profile
+    newProjectProfile = request.POST['newProject']
+
+    #############
+
+    # converting textual info in bag of words
+    jar ='D:\\pT\\stanford-postagger-2018-10-16\\stanford-postagger.jar'
+    model ='D:\\pT\\stanford-postagger-2018-10-16\\models\\english-left3words-distsim.tagger'
+    pos_tagger = StanfordPOSTagger(model, jar,encoding='latin-1')
+    data['bag'] = data.apply(lambda row:nltk.word_tokenize( row["Dpt"] ),axis=1)
+    Adata['bag'] = Adata.apply(lambda row:nltk.word_tokenize( row["dptAPI"] ),axis=1)
+    stop_words = set(stopwords.words('english')) 
+    data['bag_remove_stopwords'] = data.apply(lambda ro: [w for w in ro['bag'] if not w in stop_words],axis=1) 
+    Adata['bag_remove_stopwords'] = Adata.apply(lambda ro: [w for w in ro['bag'] if not w in stop_words],axis=1) 
+
+
+    # a helper method for text processing
+    def text_process(mess):
+    
+        # Check characters to see if they are in punctuation
+        nopunc = [char for char in mess if char not in string.punctuation]
+
+        # Join the characters again to form the string.
+        nopunc = ''.join(nopunc)
+        stem_data=[ps.stem(w) for w in nopunc.split()]
+        # Now just remove any stopwords
+        return [word for word in stem_data if word.lower() not in stopwords.words('english')]
+
+  
+    # applying the stemming process
+    ps = PorterStemmer()   
+    data['bag_stemming'] =data.apply(lambda ro: [ps.stem(w) for w in ro['bag_remove_stopwords'] ],axis=1) 
+    Adata['bag_stemming'] = Adata.apply(lambda ro: [ps.stem(w) for w in ro['bag_remove_stopwords'] ],axis=1)
+
+    # text processing
+    data['Dpt'].apply(text_process)
+    Adata['dptAPI'].apply(text_process)
+  
+    # converting textual info into a vector
+    bow_transformer = CountVectorizer(analyzer=text_process).fit(data['Dpt'])
+    Abow_transformer = CountVectorizer(analyzer=text_process).fit(Adata['dptAPI'])
+
+    # tf-idf processing
+    messages_bow = bow_transformer.transform(data['Dpt'])
+    Amessages_bow = Abow_transformer.transform(Adata['dptAPI'])
+
+    tfidf_transformer = TfidfTransformer().fit(messages_bow)
+    Atfidf_transformer = TfidfTransformer().fit(Amessages_bow)
+
+    messages_tfidf = tfidf_transformer.transform(messages_bow)
+    Amessages_tfidf = Atfidf_transformer.transform(Amessages_bow)
+
+    # starting with new project profile
+    new_project_description = newProjectProfile
+
+    new_project_bow = bow_transformer.transform([new_project_description])
+    Anew_project_bow = Abow_transformer.transform([new_project_description])
+
+    new_project_vector = tfidf_transformer.transform(new_project_bow)
+    Anew_project_vector = Atfidf_transformer.transform(Anew_project_bow)
+
+    # using cosine similarity for comparison
+    result_array=cosine_similarity(new_project_vector, messages_tfidf)
+    Aresult_array=cosine_similarity(Anew_project_vector, Amessages_tfidf)
+
+    # flattening the array into a linear array
+    similar_score_array = result_array.flatten()
+    Asimilar_score_array = Aresult_array.flatten()
+
+    # adding similarity score into the data frames respectively
+    data['similar_score']=similar_score_array
+    Adata['similar_score']=Asimilar_score_array
+
+    # sorting the data frames according to similarity score
+    ans = data.sort_values(["similar_score"], axis=0, ascending=False)
+    Aans = Adata.sort_values(["similar_score"], axis=0, ascending=False)
+
+    # extracting the simialrity scores into arrays
+    simScoreArray = ans['similar_score'].to_numpy()
+    AsimScoreArray = Aans['similar_score'].to_numpy()
+
+    # helper function for rounding off similarity score and converting it to percentage 
+    def fun(el):
+        return round((el*100),4)
+
+    # filtering those apis with similarity score > 0
+    simScoreArrayFiltered = filter(lambda x: x > 0, simScoreArray)
+    simScoreArrayMapped = list(map(fun,simScoreArrayFiltered))
+
+    AsimScoreArrayFiltered = filter(lambda x: x > 0, AsimScoreArray)
+    AsimScoreArrayMapped = list(map(fun,AsimScoreArrayFiltered))
+
+    # storing some values from data frames into arrays
+    # APIused can be array of apis too
+    APIused = ans['APIsUsed (a.k.a. npm dependencies used)'].to_numpy()
+    ATitle = Aans['Title'].to_numpy()
+
+    proTitleArray = ans['Title'].to_numpy()
+
+    ################################################################
+
+    # preparing from project branch
+    # preparing dictionary with similarity score
+    # as key and apis title as value
+    # same with project too
+    # also converting array of apis (as in APIused) to single apis dict
+    checkMap = {}       # to keep track of the apis added to the dictionary and avoid repetition
+
+    apis = {}
+    proTitle = {}
+    i = 0  
+    for i in range(0,len(simScoreArrayMapped)):
+        arr = []
+        if(' ||| ' in APIused[i]):
+            arr = APIused[i].split(' ||| ')
+        elif('|||' in APIused[i]):
+            arr = APIused[i].split('|||')
+        else:
+            arr.append(APIused[i])
+        
+        for st in arr:
+            if(checkMap.get(st)):
+                if(checkMap.get(st) > simScoreArrayMapped[i]):
+                    arr.remove(st)
+            else:
+                checkMap.update({st:simScoreArrayMapped[i]})
+        apis.update({simScoreArrayMapped[i]:arr})
+        proTitle.update({simScoreArrayMapped[i]:proTitleArray[i]})
+        i = i + 1
+
+    # preparing dict from api branch
+    di = {}
+
+    for h in range(0,len(AsimScoreArrayMapped)):
+        ar = []
+        if(checkMap.get(ATitle[h])):
+            if(checkMap.get(ATitle[h]) > AsimScoreArrayMapped[h]):
+                continue
+        ar.append(ATitle[h])
+        di.update({AsimScoreArrayMapped[h]:ar})
+        checkMap.update({ATitle[h]:AsimScoreArrayMapped[h]})
+
+    # concatinating dict from project branch and api branch 
+    apis.update(di)
+
+    # sorting the apis after concatination
+    diArray = list(apis.items())
+    diArray.sort(reverse=True)
+
+    # limiting apis to top 10 similar score 
+    diArray = diArray[:10]
+
+    apisUpdated = dict(diArray)
+
+    # limiting projects to top 15 similar score 
+    temp = list(proTitle.items())
+    temp = temp[:15]
+    proTitle = dict(temp)
+   
+    ###################################
+
+    # Representation
+    # apiDic -> {95.1691: ['async', 'grunt'], 37.4139: ['colors', 'got']}
+    # proTitle -> {95.1691: 'grunt-project-update', 37.4139: 'check-update-github', 35.1703: 'grunt-npm-install'}
+
+    return render(request,'recmd.html', {'apiDic': apisUpdated,'proDic': proTitle})
